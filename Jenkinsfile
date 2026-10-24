@@ -48,16 +48,21 @@ pipeline {
                     set -eu
 
                     CANDIDATE="devops-capstone-candidate-${BUILD_NUMBER}"
+                    NEW_IMAGE="${IMAGE_NAME}:${BUILD_NUMBER}"
+                    OLD_IMAGE=$(docker inspect "$CONTAINER_NAME" --format '{{.Config.Image}}')
 
                     cleanup() {
                         docker rm -f "$CANDIDATE" >/dev/null 2>&1 || true
                     }
                     trap cleanup EXIT
 
+                    echo "Previous image: $OLD_IMAGE"
+                    echo "New image: $NEW_IMAGE"
+
                     docker run -d \
                       --name "$CANDIDATE" \
                       -p 127.0.0.1:5001:5000 \
-                      "${IMAGE_NAME}:${BUILD_NUMBER}"
+                      "$NEW_IMAGE"
 
                     healthy=false
 
@@ -70,31 +75,68 @@ pipeline {
                     done
 
                     if [ "$healthy" != true ]; then
-                        echo "Candidate health check failed; keeping current app."
+                        echo "Candidate check failed; existing app retained."
                         exit 1
                     fi
 
-                    docker rm -f "$CONTAINER_NAME" || true
+                    docker rm -f "$CONTAINER_NAME"
 
-                    docker run -d \
+                    if docker run -d \
                       --name "$CONTAINER_NAME" \
                       --restart unless-stopped \
                       -p 127.0.0.1:5000:5000 \
-                      "${IMAGE_NAME}:${BUILD_NUMBER}"
+                      "$NEW_IMAGE"; then
+                        :
+                    else
+                        echo "New container failed to start; rolling back."
+                        docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+                        docker run -d \
+                          --name "$CONTAINER_NAME" \
+                          --restart unless-stopped \
+                          -p 127.0.0.1:5000:5000 \
+                          "$OLD_IMAGE"
+                        exit 1
+                    fi
+
+                    deployed=false
 
                     for i in $(seq 1 15); do
                         if curl -fsS http://127.0.0.1:5000/health; then
-                            echo "Deployment health check passed."
-                            exit 0
+                            deployed=true
+                            break
                         fi
                         sleep 2
                     done
 
-                    echo "Deployment health check failed."
-                    exit 1
+                    if [ "$deployed" != true ]; then
+                        echo "New deployment unhealthy; rolling back."
+                        docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+                        docker run -d \
+                          --name "$CONTAINER_NAME" \
+                          --restart unless-stopped \
+                          -p 127.0.0.1:5000:5000 \
+                          "$OLD_IMAGE"
+
+                        for i in $(seq 1 15); do
+                            if curl -fsS http://127.0.0.1:5000/health; then
+                                echo "Previous image restored and healthy."
+                                break
+                            fi
+                            sleep 2
+                        done
+
+                        exit 1
+                    fi
+
+                    echo "Deployment successful: $NEW_IMAGE"
                 '''
             }
         }
+
+
+
+
+
     }
 }
 
