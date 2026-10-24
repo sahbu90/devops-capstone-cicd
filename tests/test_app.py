@@ -8,7 +8,7 @@ def test_home_endpoint():
     assert response.status_code == 200
     assert response.json["application"] == "DevOps Capstone Web App"
     assert response.json["status"] == "running"
-
+    assert response.json["version"] == "1.0.1"
 
 def test_health_endpoint():
     client = app.test_client()
