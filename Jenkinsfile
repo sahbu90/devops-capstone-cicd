@@ -83,7 +83,10 @@ pipeline {
                     set -eu
 
                     CANDIDATE="devops-capstone-candidate-${BUILD_NUMBER}"
-                    NEW_IMAGE="${IMAGE_NAME}:${BUILD_NUMBER}"
+
+                    ECR_REGISTRY="393080455637.dkr.ecr.ap-southeast-2.amazonaws.com"
+                    NEW_IMAGE="${ECR_REGISTRY}/${IMAGE_NAME}:${BUILD_NUMBER}"
+
                     OLD_IMAGE=$(docker inspect "$CONTAINER_NAME" \
                         --format '{{.Config.Image}}')
 
@@ -95,6 +98,12 @@ pipeline {
                         docker rm -f "$CANDIDATE" >/dev/null 2>&1 || true
                     }
                     trap cleanup EXIT
+                    # Authenticate to Amazon ECR.
+                    aws ecr get-login-password --region ap-southeast-2 \
+                        | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+                    # Pull the exact image produced by this Jenkins build.
+                    docker pull "$NEW_IMAGE"
 
                     # Step 1: Start the candidate on a separate port.
                     docker run -d \
