@@ -66,7 +66,7 @@ pipeline {
 
                     echo "Previous image: $OLD_IMAGE"
                     echo "New image: $NEW_IMAGE"
-                    echo "Rollback test mode: ${ROLLBACK_TEST}"
+                    echo "Rollback test mode: ${ROLLBACK_TEST:-false}"
 
                     cleanup() {
                         docker rm -f "$CANDIDATE" >/dev/null 2>&1 || true
@@ -132,7 +132,7 @@ pipeline {
                     done
 
                     # Step 5: Test-only switch to simulate a deployment failure.
-                    if [ "${ROLLBACK_TEST}" = "true" ]; then
+                    if [ "${ROLLBACK_TEST:-false}" = "true" ]; then
                         echo "ROLLBACK TEST: Forcing the health check to fail."
                         deployed=false
                     fi
@@ -176,7 +176,7 @@ pipeline {
                         echo "Rollback successful. Restored image: $RESTORED_IMAGE"
 
                         # Expected failure in test mode: rollback was exercised.
-                        if [ "${ROLLBACK_TEST}" = "true" ]; then
+                        if [ "${ROLLBACK_TEST:-false}" = "true" ]; then
                             echo "Rollback test completed successfully."
                             exit 1
                         fi
