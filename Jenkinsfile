@@ -42,14 +42,37 @@ pipeline {
             }
         }
 
-        stage('Build Docker Image') {
+         stage('Build Docker Image') {
             steps {
                 sh '''
                     set -eu
 
+                    ECR_REGISTRY="393080455637.dkr.ecr.ap-southeast-2.amazonaws.com"
+                    ECR_IMAGE="${ECR_REGISTRY}/${IMAGE_NAME}"
+
+                    echo "Building image: ${IMAGE_NAME}:${BUILD_NUMBER}"
+
                     docker build \
                         -t "${IMAGE_NAME}:${BUILD_NUMBER}" \
                         -t "${IMAGE_NAME}:latest" .
+
+                    echo "Authenticating with Amazon ECR..."
+
+                    aws ecr get-login-password --region ap-southeast-2 \
+                        | docker login \
+                            --username AWS \
+                            --password-stdin "${ECR_REGISTRY}"
+
+                    echo "Tagging image for ECR..."
+
+                    docker tag "${IMAGE_NAME}:${BUILD_NUMBER}" \
+                        "${ECR_IMAGE}:${BUILD_NUMBER}"
+
+                    echo "Pushing image to ECR..."
+
+                    docker push "${ECR_IMAGE}:${BUILD_NUMBER}"
+
+                    echo "ECR push successful: ${ECR_IMAGE}:${BUILD_NUMBER}"
                 '''
             }
         }
