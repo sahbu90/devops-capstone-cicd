@@ -178,7 +178,7 @@ pipeline {
                         # Expected failure in test mode: rollback was exercised.
                         if [ "${ROLLBACK_TEST:-false}" = "true" ]; then
                             echo "Rollback test completed successfully."
-                            exit 1
+                            exit 0
                         fi
 
                         exit 1
