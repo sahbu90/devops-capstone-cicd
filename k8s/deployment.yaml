@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-capstone-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: devops-capstone-app
+  template:
+    metadata:
+      labels:
+        app: devops-capstone-app
+    spec:
+      containers:
+        - name: devops-capstone-app
+          image: 393080455637.dkr.ecr.ap-southeast-2.amazonaws.com/devops-capstone-web:15
+          ports:
+            - containerPort: 5000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 20

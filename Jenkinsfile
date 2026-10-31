@@ -77,137 +77,77 @@ pipeline {
             }
         }
 
-        stage('Deploy') {
+        stage('Deploy to EKS') {
             steps {
                 sh '''
                     set -eu
 
-                    CANDIDATE="devops-capstone-candidate-${BUILD_NUMBER}"
-
                     ECR_REGISTRY="393080455637.dkr.ecr.ap-southeast-2.amazonaws.com"
                     NEW_IMAGE="${ECR_REGISTRY}/${IMAGE_NAME}:${BUILD_NUMBER}"
+                    DEPLOYMENT="devops-capstone-app"
+                    CONTAINER="devops-capstone-app"
 
-                    OLD_IMAGE=$(docker inspect "$CONTAINER_NAME" \
-                        --format '{{.Config.Image}}')
+                    echo "Configuring EKS access..."
+                    aws eks update-kubeconfig \
+                        --region ap-southeast-2 \
+                        --name capstone-eks
+
+                    echo "Checking current deployment image..."
+                    OLD_IMAGE=$(kubectl get deployment "$DEPLOYMENT" \
+                        -o jsonpath="{.spec.template.spec.containers[?(@.name=='${CONTAINER}')].image}")
 
                     echo "Previous image: $OLD_IMAGE"
                     echo "New image: $NEW_IMAGE"
-                    echo "Rollback test mode: ${ROLLBACK_TEST:-false}"
 
-                    cleanup() {
-                        docker rm -f "$CANDIDATE" >/dev/null 2>&1 || true
-                    }
-                    trap cleanup EXIT
-                    # Authenticate to Amazon ECR.
-                    aws ecr get-login-password --region ap-southeast-2 \
-                        | docker login --username AWS --password-stdin "$ECR_REGISTRY"
-
-                    # Pull the exact image produced by this Jenkins build.
-                    docker pull "$NEW_IMAGE"
-
-                    # Step 1: Start the candidate on a separate port.
-                    docker run -d \
-                        --name "$CANDIDATE" \
-                        -p 127.0.0.1:5001:5000 \
-                        "$NEW_IMAGE"
-
-                    # Step 2: Check the candidate before replacing production.
-                    candidate_healthy=false
-
-                    for i in $(seq 1 15); do
-                        if curl -fsS http://127.0.0.1:5001/health; then
-                            candidate_healthy=true
-                            break
-                        fi
-                        sleep 2
-                    done
-
-                    if [ "$candidate_healthy" != true ]; then
-                        echo "Candidate failed. Existing application retained."
+                    if [ -z "$OLD_IMAGE" ]; then
+                        echo "ERROR: Could not determine previous image."
                         exit 1
                     fi
 
-                    echo "Candidate is healthy."
-
-                    # Step 3: Replace the existing application.
-                    docker rm -f "$CONTAINER_NAME"
-
-                    if ! docker run -d \
-                        --name "$CONTAINER_NAME" \
-                        --restart unless-stopped \
-                        -p 127.0.0.1:5000:5000 \
-                        "$NEW_IMAGE"; then
-
-                        echo "New container failed to start. Rolling back."
-
-                        docker rm -f "$CONTAINER_NAME" \
-                            >/dev/null 2>&1 || true
-
-                        docker run -d \
-                            --name "$CONTAINER_NAME" \
-                            --restart unless-stopped \
-                            -p 127.0.0.1:5000:5000 \
-                            "$OLD_IMAGE"
-
-                        exit 1
-                    fi
-
-                    # Step 4: Verify the new deployment.
-                    deployed=false
-
-                    for i in $(seq 1 15); do
-                        if curl -fsS http://127.0.0.1:5000/health; then
-                            deployed=true
-                            break
-                        fi
-                        sleep 2
-                    done
-
-                    # Step 5: Test-only switch to simulate a deployment failure.
                     if [ "${ROLLBACK_TEST:-false}" = "true" ]; then
-                        echo "ROLLBACK TEST: Forcing the health check to fail."
-                        deployed=false
+                        echo "ROLLBACK TEST: Deploying an intentionally invalid image."
+                        TARGET_IMAGE="${ECR_REGISTRY}/${IMAGE_NAME}:rollback-test-invalid"
+                    else
+                        TARGET_IMAGE="$NEW_IMAGE"
                     fi
 
-                    # Step 6: Restore the previous image if deployment failed.
-                    if [ "$deployed" != true ]; then
-                        echo "Deployment unhealthy. Rolling back to $OLD_IMAGE."
+                    echo "Updating Kubernetes Deployment..."
+                    kubectl set image deployment/"$DEPLOYMENT" \
+                        "$CONTAINER=$TARGET_IMAGE"
 
-                        docker rm -f "$CONTAINER_NAME" \
-                            >/dev/null 2>&1 || true
+                    echo "Waiting for Kubernetes rollout..."
+                    if kubectl rollout status deployment/"$DEPLOYMENT" \
+                        --timeout=120s; then
 
-                        docker run -d \
-                            --name "$CONTAINER_NAME" \
-                            --restart unless-stopped \
-                            -p 127.0.0.1:5000:5000 \
-                            "$OLD_IMAGE"
-
-                        rollback_healthy=false
-
-                        for i in $(seq 1 15); do
-                            if curl -fsS http://127.0.0.1:5000/health; then
-                                rollback_healthy=true
-                                break
-                            fi
-                            sleep 2
-                        done
-
-                        if [ "$rollback_healthy" != true ]; then
-                            echo "CRITICAL: Rollback health check failed."
+                        if [ "${ROLLBACK_TEST:-false}" = "true" ]; then
+                            echo "ERROR: Rollback test did not trigger a deployment failure."
                             exit 1
                         fi
 
-                        RESTORED_IMAGE=$(docker inspect "$CONTAINER_NAME" \
-                            --format '{{.Config.Image}}')
+                        echo "Deployment successful."
+                        kubectl get deployment "$DEPLOYMENT"
+                        kubectl get pods -l app=devops-capstone-app
+                    else
+                        echo "Deployment failed. Rolling back to previous revision..."
+
+                        kubectl rollout undo deployment/"$DEPLOYMENT"
+
+                        echo "Waiting for rollback to complete..."
+                        kubectl rollout status deployment/"$DEPLOYMENT" \
+                            --timeout=120s
+
+                        RESTORED_IMAGE=$(kubectl get deployment "$DEPLOYMENT" \
+                            -o jsonpath="{.spec.template.spec.containers[?(@.name=='${CONTAINER}')].image}")
+
+                        echo "Restored image: $RESTORED_IMAGE"
 
                         if [ "$RESTORED_IMAGE" != "$OLD_IMAGE" ]; then
-                            echo "CRITICAL: Restored image does not match."
+                            echo "CRITICAL: Rollback image verification failed."
                             exit 1
                         fi
 
-                        echo "Rollback successful. Restored image: $RESTORED_IMAGE"
+                        echo "Rollback successful."
 
-                        # Expected failure in test mode: rollback was exercised.
                         if [ "${ROLLBACK_TEST:-false}" = "true" ]; then
                             echo "Rollback test completed successfully."
                             exit 0
@@ -215,12 +155,6 @@ pipeline {
 
                         exit 1
                     fi
-
-                    # Step 7: Confirm the deployed image.
-                    DEPLOYED_IMAGE=$(docker inspect "$CONTAINER_NAME" \
-                        --format '{{.Config.Image}}')
-
-                    echo "Deployment successful: $DEPLOYED_IMAGE"
                 '''
             }
         }
