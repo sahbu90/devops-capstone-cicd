@@ -1,0 +1,35 @@
+---
+- name: Configure Linux server using Ansible
+  hosts: managed
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Display server hostname
+      ansible.builtin.debug:
+        msg: "Configuring server {{ ansible_facts.hostname }}"
+
+    - name: Ensure curl is installed
+      ansible.builtin.apt:
+        name: curl
+        state: present
+        update_cache: false
+
+    - name: Create DevOps project directory
+      ansible.builtin.file:
+        path: /opt/devops-capstone
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Create Ansible managed configuration file
+      ansible.builtin.copy:
+        dest: /opt/devops-capstone/ansible-managed.txt
+        content: |
+          Managed by Ansible
+          Project: DevOps Capstone
+          Environment: Ubuntu Linux
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'

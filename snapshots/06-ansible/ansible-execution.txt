@@ -1,0 +1,23 @@
+
+PLAY [Configure Linux server using Ansible] ************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [Display server hostname] *************************************************
+ok: [localhost] => {
+    "msg": "Configuring server ip-172-31-38-80"
+}
+
+TASK [Ensure curl is installed] ************************************************
+ok: [localhost]
+
+TASK [Create DevOps project directory] *****************************************
+ok: [localhost]
+
+TASK [Create Ansible managed configuration file] *******************************
+ok: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=5    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
